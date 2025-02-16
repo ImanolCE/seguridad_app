@@ -11,8 +11,8 @@ app.use(cors());
 
 // Usuarios hardcodeados
 const users = [
-  { username: "admin", password: "12345" },
-  { username: "user", password: "54321" }
+  { username: "imanol", password: "12345" },
+  { username: "pogo", password: "67890" }
 ];
 
 // Endpoint de login
