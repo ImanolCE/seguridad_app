@@ -31,6 +31,11 @@ const Login = () => {
         <input type="password" placeholder="Contraseña" value={password} onChange={(e) => setPassword(e.target.value)} />
         <button type="submit">Iniciar sesión</button>
       </form>
+
+        {/* Botón para ir a la página de registro */}
+      <p>¿Registrarse?</p>
+      <button onClick={() => navigate("/register")}>Registrarse</button>
+
     </div>
   );
 };

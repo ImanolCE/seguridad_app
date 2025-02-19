@@ -1,6 +1,6 @@
 const admin = require("firebase-admin");
 
-// Carga la clave de servicio de Firebase (descárgala desde Firebase Console)
+// clave de servicio de Firebase 
 const serviceAccount = require("./serviceAccountKey.json");
 
 admin.initializeApp({
