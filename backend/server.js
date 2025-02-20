@@ -15,7 +15,7 @@ app.use(cors());
 
 // Definir permisos para cada rol
 const ROLE_PERMISSIONS = {
-    admin: ["get_user", "delete_user", "update_user", "create_roles", "delete_roles", "assign_roles"],
+    admin: ["get_user", "add_user","delete_user", "update_user", "add_permissions","delete_permissions","update_permissions","add_rol", "update_rol","delete_rol"],
     common_user: ["get_user", "update_user"]
 };
 
@@ -110,34 +110,320 @@ router.get('/get_user', authenticateToken, authorizePermission('get_user'), asyn
         res.status(500).json({ message: "Error interno del servidor" });
     }
 });
-router.delete('/delete_user/:id', authenticateToken, authorizePermission("deleteUsers"), async (req, res) => {
-    res.json({ message: 'Usuario eliminado' });
+
+
+router.post('/add_user', authenticateToken, authorizePermission("add_user"), async (req, res) => {
+    const { email, password, username, role } = req.body;
+
+    // Validar que se hayan proporcionado todos los campos requeridos
+    if (!email || !password || !username || !role) {
+        return res.status(400).json({ message: "Todos los campos son requeridos" });
+    }
+
+    // Validar el rol, debe ser admin o common_user
+    if (role !== 'admin' && role !== 'common_user') {
+        return res.status(400).json({ message: "Rol inválido. Debe ser 'admin' o 'common_user'" });
+    }
+
+    try {
+        // Verificar si el correo ya está registrado
+        const userSnapshot = await db.collection("users").where("email", "==", email).get();
+        if (!userSnapshot.empty) {
+            return res.status(400).json({ message: "El correo electrónico ya está registrado" });
+        }
+
+        // Encriptar la contraseña antes de guardarla
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Crear el objeto del nuevo usuario
+        const newUser = {
+            email,
+            password: hashedPassword,
+            username,
+            role: role, // El rol elegido por el usuario
+            date_register: new Date(), // Marca de tiempo de registro
+            last_login: null, // No tiene último acceso al principio
+            
+        };
+
+        // Agregar el usuario a la colección 'users' en Firestore
+        const userRef = await db.collection("users").add(newUser);
+
+        // Devolver una respuesta exitosa
+        res.status(201).json({
+            message: "Usuario creado exitosamente",
+            userId: userRef.id
+        });
+    } catch (error) {
+        console.error("Error al agregar usuario:", error);
+        res.status(500).json({ message: "Error interno del servidor" });
+    }
 });
 
-router.put('/update_user/:id', authenticateToken, authorizePermission("updateUsers"), async (req, res) => {
-    res.json({ message: 'Usuario actualizado' });
+
+
+router.delete('/delete_permissions/:role', authenticateToken, authorizePermission("delete_permissions"), async (req, res) => {
+    const { role } = req.params;
+    const { permission } = req.body; // Permiso a eliminar
+
+    if (!permission) {
+        return res.status(400).json({ message: 'El campo "permission" es obligatorio' });
+    }
+
+    try {
+        // Buscar el rol en la colección "roles" basado en el campo "role"
+        const rolesSnapshot = await db.collection('roles').where('role', '==', role).get();
+
+        if (rolesSnapshot.empty) {
+            return res.status(404).json({ message: `El rol "${role}" no existe` });
+        }
+
+        // Obtener el ID del documento del rol encontrado
+        const roleDoc = rolesSnapshot.docs[0];
+        const roleRef = db.collection('roles').doc(roleDoc.id);
+        const roleData = roleDoc.data();
+
+        // Obtener permisos actuales del rol
+        const currentPermissions = roleData.permissions || [];
+
+        // Verificar si el permiso existe en el rol
+        if (!currentPermissions.includes(permission)) {
+            return res.status(400).json({ message: `El permiso "${permission}" no está asignado al rol "${role}"` });
+        }
+
+        // Eliminar el permiso de la lista
+        const updatedPermissions = currentPermissions.filter(perm => perm !== permission);
+
+        // Actualizar el documento en Firestore
+        await roleRef.update({ permissions: updatedPermissions });
+
+        res.json({ message: `Permiso "${permission}" eliminado del rol "${role}" correctamente` });
+    } catch (error) {
+        console.error("Error al eliminar permiso:", error);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
 });
 
-router.put('/update_rol/:id/role', authenticateToken, authorizePermission("updateRol"), async (req, res) => {
-    res.json({ message: 'Rol actualizado' });
+
+
+// Endpoint para actualizar usuario
+router.put('/update_user/:id', authenticateToken, authorizePermission("update_user"), async (req, res) => {
+    const { id } = req.params;
+    const { username, email, password, role } = req.body; // Campos a actualizar
+
+    try {
+        // Referencia al usuario
+        const userRef = db.collection('users').doc(id);
+        const userDoc = await userRef.get();
+
+        // Verificar si el usuario existe
+        if (!userDoc.exists) {
+            return res.status(404).json({ message: 'Usuario no encontrado' });
+        }
+
+        // Si el password es proporcionado, encriptarlo antes de actualizar
+        let updateData = { email, role }; // Campos a actualizar
+
+        if (password) {
+            const hashedPassword = await bcrypt.hash(password, 10); // Encriptar la nueva contraseña
+            updateData.password = hashedPassword; // Agregar la contraseña encriptada a los datos a actualizar
+        }
+
+        // Actualizar los datos del usuario
+        await userRef.update({
+            ...updateData,
+            last_login: new Date(), // Actualizar la fecha del último login (opcional)
+        });
+
+        res.json({ message: 'Usuario actualizado correctamente' });
+    } catch (error) {
+        console.error("Error al actualizar usuario:", error);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
 });
 
-router.post('/add_rol', authenticateToken, authorizePermission("addRol"), async (req, res) => {
-    res.json({ message: 'Rol agregado' });
+
+// Ruta para agregar un nuevo rol
+router.post('/add_rol', authenticateToken, authorizePermission("add_rol"), async (req, res) => {
+    const { role } = req.body;  // El rol a agregar
+
+    // Validar que el rol esté presente
+    if (!role) {
+        return res.status(400).json({ message: 'El campo "role" es obligatorio' });
+    }
+
+    try {
+        // Verificar si el rol ya existe en la base de datos
+        const roleRef = db.collection("roles").doc(role); // Usamos el nombre del rol como ID
+        const roleDoc = await roleRef.get();
+
+        if (roleDoc.exists) {
+            return res.status(400).json({ message: 'Este rol ya existe' });
+        }
+
+        // Si el rol no existe, creamos un nuevo documento con el nombre del rol
+        await roleRef.set({
+            permissions: [], // Inicialmente vacío
+            date_created: new Date()
+        });
+
+        res.status(200).json({ message: `Rol "${role}" agregado correctamente` });
+    } catch (error) {
+        console.error("Error al agregar rol:", error);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
 });
 
-router.delete('/delete_rol/:id', authenticateToken, authorizePermission("deleteRol"), async (req, res) => {
-    res.json({ message: 'Rol eliminado' });
+
+
+
+router.put('/update_rol/:oldRole', authenticateToken, authorizePermission("update_rol"), async (req, res) => {
+    const { oldRole } = req.params; // Nombre del rol actual
+    const { newRole } = req.body;   // Nuevo nombre del rol
+
+    // Validar que el nuevo rol esté presente
+    if (!newRole) {
+        return res.status(400).json({ message: 'El campo "newRole" es obligatorio' });
+    }
+
+    try {
+        const oldRoleRef = db.collection("roles").doc(oldRole);
+        const oldRoleDoc = await oldRoleRef.get();
+
+        if (!oldRoleDoc.exists) {
+            return res.status(404).json({ message: 'El rol no existe' });
+        }
+
+        // Verificar si el nuevo rol ya existe
+        const newRoleRef = db.collection("roles").doc(newRole);
+        const newRoleDoc = await newRoleRef.get();
+
+        if (newRoleDoc.exists) {
+            return res.status(400).json({ message: 'El nuevo rol ya existe' });
+        }
+
+        // Obtener datos del rol actual
+        const roleData = oldRoleDoc.data();
+
+        // Crear el nuevo documento con los mismos datos pero con el nuevo nombre
+        await newRoleRef.set({
+            permissions: roleData.permissions || [],
+            date_created: roleData.date_created
+        });
+
+        // Eliminar el documento con el nombre antiguo
+        await oldRoleRef.delete();
+
+        res.status(200).json({ message: `Rol "${oldRole}" renombrado a "${newRole}" correctamente` });
+    } catch (error) {
+        console.error("Error al actualizar rol:", error);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
 });
 
-router.post('/add_permissions', authenticateToken, authorizePermission("addPermission"), async (req, res) => {
-    res.json({ message: 'Permiso agregado' });
+
+
+// Ruta para eliminar un rol
+router.delete('/delete_rol/:role', authenticateToken, authorizePermission("delete_rol"), async (req, res) => {
+    const { role } = req.params; // Nombre del rol a eliminar
+
+    try {
+        const roleRef = db.collection("roles").doc(role);
+        const roleDoc = await roleRef.get();
+
+        if (!roleDoc.exists) {
+            return res.status(404).json({ message: 'El rol no existe' });
+        }
+
+        // Eliminar el documento
+        await roleRef.delete();
+
+        res.status(200).json({ message: `Rol "${role}" eliminado correctamente` });
+    } catch (error) {
+        console.error("Error al eliminar rol:", error);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
 });
 
-router.delete('/delete_permissions/:id', authenticateToken, authorizePermission("deletePermission"), async (req, res) => {
-    res.json({ message: 'Permiso eliminado' });
+
+
+// Ruta para agregar un permiso a un rol existente
+router.post('/add_permissions', authenticateToken, authorizePermission("add_permissions"), async (req, res) => {
+    const { roleId, permission } = req.body;  // roleId = ID del rol, permission = el permiso que quieres agregar
+
+    if (!roleId || !permission) {
+        return res.status(400).json({ message: 'El rol y el permiso son obligatorios' });
+    }
+
+    try {
+        const roleRef = db.collection('roles').doc(roleId);  // Referencia al rol existente
+        const roleDoc = await roleRef.get();
+
+        if (!roleDoc.exists) {
+            return res.status(404).json({ message: 'Rol no encontrado' });
+        }
+
+        // Obtener los permisos actuales del rol
+        const currentPermissions = roleDoc.data().permissions || [];
+
+        // Verificar si el permiso ya está agregado
+        if (currentPermissions.includes(permission)) {
+            return res.status(400).json({ message: 'Este permiso ya está agregado a este rol' });
+        }
+
+        // Agregar el permiso al array de permisos del rol
+        await roleRef.update({
+            permissions: [...currentPermissions, permission]  // Añadir el nuevo permiso al array de permisos
+        });
+
+        res.status(200).json({ message: `Permiso "${permission}" agregado correctamente al rol` });
+    } catch (error) {
+        console.error("Error al agregar permiso:", error);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
 });
- 
+
+
+router.delete('/delete_permissions/:role', authenticateToken, authorizePermission("delete_permissions"), async (req, res) => {
+    const { role } = req.params;
+    const { permission } = req.body; // Permiso a eliminar
+
+    if (!permission) {
+        return res.status(400).json({ message: 'El campo "permission" es obligatorio' });
+    }
+
+    try {
+        // Obtener referencia al documento del rol
+        const roleRef = db.collection('roles').doc(role);
+        const roleDoc = await roleRef.get();
+
+        // Verificar si el rol existe
+        if (!roleDoc.exists) {
+            return res.status(404).json({ message: `El rol "${role}" no existe` });
+        }
+
+        // Obtener permisos actuales del rol
+        const roleData = roleDoc.data();
+        const currentPermissions = roleData.permissions || [];
+
+        // Verificar si el permiso existe en el rol
+        if (!currentPermissions.includes(permission)) {
+            return res.status(400).json({ message: `El permiso "${permission}" no está asignado al rol "${role}"` });
+        }
+
+        // Eliminar el permiso de la lista
+        const updatedPermissions = currentPermissions.filter(perm => perm !== permission);
+
+        // Actualizar el documento en Firestore
+        await roleRef.update({ permissions: updatedPermissions });
+
+        res.json({ message: `Permiso "${permission}" eliminado del rol "${role}" correctamente` });
+    } catch (error) {
+        console.error("Error al eliminar permiso:", error);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
+});
+
 
 
 
